@@ -2,6 +2,7 @@ package chaperone
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -48,7 +49,8 @@ func (p *ChaperoneProxy) Start(ctx context.Context) error {
 		}, rateLimit.WaitDuration)
 	}
 
-	return http.ListenAndServe("0.0.0.0:8080", p)
+	listenAddr := fmt.Sprintf("0.0.0.0:%d", Port)
+	return http.ListenAndServe(listenAddr, p)
 }
 
 func copyHeader(dst, src http.Header) {
@@ -111,18 +113,11 @@ func (p *ChaperoneProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		appendHostToXForwardHeader(req.Header, clientIP)
 	}
 
-	// robots.txt file directives
-	respectRobots := true
-	respectRobotsHeader := req.Header.Get("X-Respect-Robots")
-	if strings.ToLower(respectRobotsHeader) == "false" || respectRobotsHeader == "0" {
-		respectRobots = false
-	}
-
 	// HTTPS upgrade directives
 	upgradeConnection := true
 	upgradeConnectionHeader := req.Header.Get("X-Upgrade-HTTPS")
 	if strings.ToLower(upgradeConnectionHeader) == "false" || upgradeConnectionHeader == "0" {
-		respectRobots = false
+		upgradeConnection = false
 	}
 	if upgradeConnection {
 		req.URL.Scheme = "https"
@@ -142,11 +137,10 @@ func (p *ChaperoneProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	// Make proxied request.
 	res, err := p.client.RoundTripWithOptions(req, &proxy.RequestOptions{
-		RespectRobotsFile: respectRobots,
-		UserAgent:         "Chaperone",
-		MinCacheTTL:       minTTL,
-		MaxCacheTTL:       maxTTL,
-		DefaultCacheTTL:   defaultTTL,
+		UserAgent:       "Chaperone",
+		MinCacheTTL:     minTTL,
+		MaxCacheTTL:     maxTTL,
+		DefaultCacheTTL: defaultTTL,
 	})
 	if err != nil {
 		logger.Error(err.Error())

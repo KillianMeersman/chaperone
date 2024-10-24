@@ -40,11 +40,10 @@ func ParseRetryAfterHeader(res *http.Response, defaultWait time.Duration) time.D
 
 // Request option struct for the NiceClient.RoundTripWithOptions method.
 type RequestOptions struct {
-	RespectRobotsFile bool
-	UserAgent         string
-	MinCacheTTL       time.Duration
-	MaxCacheTTL       time.Duration
-	DefaultCacheTTL   time.Duration
+	UserAgent       string
+	MinCacheTTL     time.Duration
+	MaxCacheTTL     time.Duration
+	DefaultCacheTTL time.Duration
 }
 
 // A http client (RoundTripper) that performs retry logic, rate-limiting, robot-exclusion and caching.
@@ -66,11 +65,10 @@ func NewNiceClient(ctx context.Context, roundTripper http.RoundTripper, throttle
 // Implementation of the RoundTripper interface.
 func (c *NiceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	return c.RoundTripWithOptions(req, &RequestOptions{
-		RespectRobotsFile: false,
-		UserAgent:         "Chaperone",
-		MinCacheTTL:       0,
-		MaxCacheTTL:       24 * time.Hour,
-		DefaultCacheTTL:   0,
+		UserAgent:       "Chaperone",
+		MinCacheTTL:     0,
+		MaxCacheTTL:     24 * time.Hour,
+		DefaultCacheTTL: 0,
 	})
 }
 
