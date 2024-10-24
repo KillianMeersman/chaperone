@@ -1,0 +1,31 @@
+rate_limits:
+  - url: https://panel.sendcloud.sc/api/v2/
+    method: GET
+    wait_duration: 0.06s  # 1000 requests/minute
+  - url: https://panel.sendcloud.sc/api/v2/
+    method: POST
+    wait_duration: 0.6s  # 100 requests/minute
+  - url: https://panel.sendcloud.sc/api/v2/
+    method: PUT
+    wait_duration: 0.6s  # 100 requests/minute
+  - url: https://panel.sendcloud.sc/api/v2/
+    method: PATCH
+    wait_duration: 0.6s  # 100 requests/minute
+  - url: https://panel.sendcloud.sc/api/v2/
+    method: DELETE
+    wait_duration: 0.6s  # 100 requests/minute
+
+
+cache_overrides:
+  - url: https://panel.sendcloud.sc/api/v2/contracts
+    min_ttl: 10m
+    max_ttl: 1h
+    default_ttl: 10m
+  - url: https://panel.sendcloud.sc/api/v2/shipping-products
+    min_ttl: 10m
+    max_ttl: 1h
+    default_ttl: 10m
+  - url: https://panel.sendcloud.sc/api/v2/shipping-price
+    min_ttl: 10m
+    max_ttl: 1h
+    default_ttl: 10m
