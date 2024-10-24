@@ -144,7 +144,7 @@ func (c *MemoryHTTPCache) Cache(ctx context.Context, url string, res *http.Respo
 	if err != nil {
 		return nil, err
 	}
-	body := io.NopCloser(bytes.NewReader(data))
+	body := io.NopCloser(io.MultiReader(bytes.NewReader(data), res.Body))
 
 	logger = logger.With("size", fmt.Sprintf("%d", len(data)))
 
