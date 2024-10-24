@@ -1,4 +1,4 @@
-CONTAINER := ghcr.io/KillianMeersman/chaperone
+CONTAINER := ghcr.io/killianmeersman/chaperone
 TAG ?= latest
 
 .ONESHELL:
@@ -15,7 +15,7 @@ vendor: tidy
 vet:
 	go vet ./...
 
-test: vendor
+test: vendor vet
 	go test -v -race ./...
 
 fuzz: vendor
@@ -26,8 +26,11 @@ build: vendor vet test
 	mkdir dist || true
 	go build -o dist/$(TARGET) ./cmd/$(TARGET)/main.go
 
-container: vendor vet test
+container:
 	docker build -t $(CONTAINER):$(TAG) .
+
+publish: container
+	docker push $(CONTAINER):$(TAG)
 
 run: container
 	docker run \

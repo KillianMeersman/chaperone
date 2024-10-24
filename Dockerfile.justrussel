@@ -1,5 +1,0 @@
-FROM chaperone:latest
-
-COPY chaperone.yaml chaperone.yaml
-
-CMD ["proxy"]
