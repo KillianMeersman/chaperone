@@ -49,12 +49,12 @@ type RequestOptions struct {
 // A http client (RoundTripper) that performs retry logic, rate-limiting, robot-exclusion and caching.
 type NiceClient struct {
 	throttle     HTTPThrottle
-	cache        HTTPCache
+	cache        *HTTPCache
 	roundtripper http.RoundTripper
 }
 
 // Creates a new NiceClient with the provided options.
-func NewNiceClient(ctx context.Context, roundTripper http.RoundTripper, throttle HTTPThrottle, cache HTTPCache) *NiceClient {
+func NewNiceClient(ctx context.Context, roundTripper http.RoundTripper, throttle HTTPThrottle, cache *HTTPCache) *NiceClient {
 	return &NiceClient{
 		throttle,
 		cache,

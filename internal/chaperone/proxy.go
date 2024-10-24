@@ -28,7 +28,7 @@ type ChaperoneProxy struct {
 
 func (p *ChaperoneProxy) Start(ctx context.Context) error {
 	throttle := proxy.NewMemoryHTTPThrottle(time.Second)
-	cache := proxy.NewMemoryHTTPCache(512e6)
+	cache := proxy.NewMemoryHTTPCache(ctx, 512e6)
 	p.client = proxy.NewNiceClient(ctx, http.DefaultTransport, throttle, cache)
 
 	configFile, err := ParseConfigFile(ConfigFileLocation)

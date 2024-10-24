@@ -47,17 +47,7 @@ func (c *CachedResponse) BodyReadCloser() io.ReadCloser {
 }
 
 // A HTTP cache caches responses according to their caching headers.
-type HTTPCache interface {
-	// Cache the response and return a ReadCloser so that the body can be re-read.
-	// If re-using the response after caching, ensure the response body is replaced with the returned ReadCloser. e.g.
-	// `res.Body, err = cache.Cache(ctx, url, res, ...)`
-	Cache(ctx context.Context, url string, res *http.Response, minTTL, maxTTL, defaultTTL time.Duration) (io.ReadCloser, error)
-	// Get the cached response for the given url. Returns nil if no response was cached.
-	Get(ctx context.Context, req *http.Request) (*CachedResponse, error)
-}
-
-// An in-memory http cache.
-type MemoryHTTPCache struct {
+type HTTPCache struct {
 	// Stores the actual cached responses per cache-key (url + sorted vary headers).
 	cachedResponses kvstore.KVStore[string, *CachedResponse]
 	// Stores which headers to use in the cache keys per url.
@@ -68,10 +58,10 @@ type MemoryHTTPCache struct {
 	IgnoreHeaders  bool
 }
 
-func NewMemoryHTTPCache(maxSize int) *MemoryHTTPCache {
-	cache := &MemoryHTTPCache{
-		cachedResponses: kvstore.NewMemoryKVStore[string, *CachedResponse](context.Background()),
-		urlVaryHeaders:  kvstore.NewMemoryKVStore[string, []string](context.Background()),
+func NewHTTPCache(maxSize int, responses kvstore.KVStore[string, *CachedResponse], varyHeaders kvstore.KVStore[string, []string]) *HTTPCache {
+	cache := &HTTPCache{
+		cachedResponses: responses,
+		urlVaryHeaders:  varyHeaders,
 		currentSize:     0,
 		maxSize:         maxSize,
 		IgnoreHeaders:   false,
@@ -80,7 +70,14 @@ func NewMemoryHTTPCache(maxSize int) *MemoryHTTPCache {
 	return cache
 }
 
-func (c *MemoryHTTPCache) Cache(ctx context.Context, url string, res *http.Response, minTTL, maxTTL, defaultTTL time.Duration) (io.ReadCloser, error) {
+func NewMemoryHTTPCache(ctx context.Context, maxSize int) *HTTPCache {
+	return NewHTTPCache(maxSize, kvstore.NewMemoryKVStore[string, *CachedResponse](ctx), kvstore.NewMemoryKVStore[string, []string](ctx))
+}
+
+// Cache the response and return a ReadCloser so that the body can be re-read.
+// If re-using the response after caching, ensure the response body is replaced with the returned ReadCloser. e.g.
+// `res.Body, err = cache.Cache(ctx, url, res, ...)`
+func (c *HTTPCache) Cache(ctx context.Context, url string, res *http.Response, minTTL, maxTTL, defaultTTL time.Duration) (io.ReadCloser, error) {
 	ttl := defaultTTL
 	var err error
 
@@ -133,13 +130,13 @@ func (c *MemoryHTTPCache) Cache(ctx context.Context, url string, res *http.Respo
 		logger = logger.With("size", fmt.Sprintf("%d", contentLength))
 
 		if c.currentSize+int(contentLength) > c.maxSize {
-			logger.Warning("caching page would exceed max size, not caching")
+			logger.Warning("caching response would exceed max size, not caching")
 			return res.Body, nil
 		}
 	}
 
 	// Read response body to be cached until at most the content length (prevents certain DoS attacks).
-	limitedBody := io.LimitReader(res.Body, contentLength)
+	limitedBody := io.LimitReader(res.Body, contentLength+1)
 	data, err := io.ReadAll(limitedBody)
 	if err != nil {
 		return nil, err
@@ -148,12 +145,15 @@ func (c *MemoryHTTPCache) Cache(ctx context.Context, url string, res *http.Respo
 
 	logger = logger.With("size", fmt.Sprintf("%d", len(data)))
 
-	if c.currentSize+len(data) > c.maxSize {
-		logger.Warning("caching page would exceed max size, not caching")
+	if len(data) > int(contentLength) {
+		logger.Warning("response larger than Content-Length, not caching")
+		return body, nil
+	} else if c.currentSize+len(data) > c.maxSize {
+		logger.Warning("caching response would exceed max size, not caching")
 		return body, nil
 	}
 
-	logger.With("ttl_seconds", fmt.Sprint(ttl.Seconds())).Debug("caching page")
+	logger.With("ttl_seconds", fmt.Sprint(ttl.Seconds())).Debug("caching response")
 	c.cachedResponses.Store(ctx, cacheKey, &CachedResponse{
 		StatusCode:      res.StatusCode,
 		Body:            data,
@@ -165,7 +165,8 @@ func (c *MemoryHTTPCache) Cache(ctx context.Context, url string, res *http.Respo
 	return body, nil
 }
 
-func (c *MemoryHTTPCache) Get(ctx context.Context, req *http.Request) (*CachedResponse, error) {
+// Get the cached response for the given url. Returns nil if no response was cached.
+func (c *HTTPCache) Get(ctx context.Context, req *http.Request) (*CachedResponse, error) {
 	// Get the headers upon which responses at the request url vary.
 	varyHeaders, _, err := c.urlVaryHeaders.Get(ctx, req.URL.String())
 	if err != nil {
@@ -179,10 +180,10 @@ func (c *MemoryHTTPCache) Get(ctx context.Context, req *http.Request) (*CachedRe
 
 	data, exists, err := c.cachedResponses.Get(ctx, cacheKey)
 	if exists {
-		logger.Debug("found cached page")
+		logger.Debug("found cached response")
 		return data, err
 	}
 
-	logger.Debug("did not find cached page")
+	logger.Debug("no cached response")
 	return nil, err
 }
