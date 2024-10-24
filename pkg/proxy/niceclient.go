@@ -126,11 +126,14 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 			return nil, err
 		}
 
+		logger = logger.With("status_code", fmt.Sprint(res.StatusCode))
+
 		logger.Debug("got response", "status_code", fmt.Sprint(res.StatusCode))
 
 		switch res.StatusCode {
 		case 429, 503:
 			// Backoff status codes, meaning we're rate-limited or the service is down.
+			logger.Warning("got backoff status code")
 
 			// Check if there was a Retry-After header and obey if present.
 			waitTimeMs := ParseRetryAfterHeader(res, 3*time.Second).Milliseconds()

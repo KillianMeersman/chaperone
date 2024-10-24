@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -93,7 +94,7 @@ func appendHostToXForwardHeader(header http.Header, host string) {
 }
 
 func (p *ChaperoneProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	logger := log.DefaultLogger
+	logger := log.DefaultLogger.With("request_id", fmt.Sprint(rand.Int()))
 
 	// Code from https://gist.github.com/yowu/f7dc34bd4736a65ff28d
 	if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
@@ -102,6 +103,10 @@ func (p *ChaperoneProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		logger.Error(msg)
 		return
 	}
+
+	// Save logger to request context.
+	ctx := log.NewContext(req.Context(), logger)
+	req = req.WithContext(ctx)
 
 	//http: Request.RequestURI can't be set in client requests.
 	//http://golang.org/src/pkg/net/http/client.go
