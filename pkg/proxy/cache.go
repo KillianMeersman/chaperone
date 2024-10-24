@@ -122,23 +122,25 @@ func (c *MemoryHTTPCache) Cache(ctx context.Context, url string, res *http.Respo
 	c.urlVaryHeaders.Store(ctx, url, varyHeaders, ttl)
 	cacheKey := GetCacheKey(varyHeaders, res.Request)
 
-	// Check response size
-	if cl := res.Header.Get("Content-Length"); cl != "" {
-		lengthOctets, err := strconv.ParseInt(cl, 10, 64)
+	// Check response size, assume the max allowed size unless specified by the Content-Length header.
+	contentLength := int64(c.maxSize)
+	if contentLengthHeader := res.Header.Get("Content-Length"); contentLengthHeader != "" {
+		contentLength, err = strconv.ParseInt(contentLengthHeader, 10, 64)
 		if err != nil {
 			return nil, err
 		}
 
-		logger = logger.With("size", fmt.Sprintf("%d", lengthOctets))
+		logger = logger.With("size", fmt.Sprintf("%d", contentLength))
 
-		if c.currentSize+int(lengthOctets) > c.maxSize {
+		if c.currentSize+int(contentLength) > c.maxSize {
 			logger.Warning("caching page would exceed max size, not caching")
 			return res.Body, nil
 		}
 	}
 
-	// Read entire response body to be cached.
-	data, err := io.ReadAll(res.Body)
+	// Read response body to be cached until at most the content length (prevents certain DoS attacks).
+	limitedBody := io.LimitReader(res.Body, contentLength)
+	data, err := io.ReadAll(limitedBody)
 	if err != nil {
 		return nil, err
 	}
