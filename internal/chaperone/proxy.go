@@ -13,6 +13,11 @@ import (
 
 	"github.com/KillianMeersman/chaperone/pkg/log"
 	"github.com/KillianMeersman/chaperone/pkg/proxy"
+	"github.com/KillianMeersman/chaperone/pkg/telemetry"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // The Chaperone proxy.
@@ -27,6 +32,8 @@ type ChaperoneProxy struct {
 }
 
 func (p *ChaperoneProxy) Start(ctx context.Context) error {
+	telemetry.InitTracing(ctx)
+
 	throttle := proxy.NewMemoryHTTPThrottle(time.Second)
 	cache := proxy.NewMemoryHTTPCache(ctx, 512e6)
 	p.client = proxy.NewNiceClient(ctx, http.DefaultTransport, throttle, cache)
@@ -94,7 +101,15 @@ func appendHostToXForwardHeader(header http.Header, host string) {
 }
 
 func (p *ChaperoneProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	// Initialize logger
 	logger := log.DefaultLogger.With("request_id", fmt.Sprint(rand.Int()))
+
+	ctx := otel.GetTextMapPropagator().Extract(req.Context(), propagation.HeaderCarrier(req.Header))
+
+	// Initialize root trace
+	ctx, span := telemetry.Tracer.Start(ctx, req.URL.String(), trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("http.url", req.URL.String())))
+	req = req.WithContext(ctx)
+	defer span.End()
 
 	// Code from https://gist.github.com/yowu/f7dc34bd4736a65ff28d
 	if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
@@ -105,7 +120,7 @@ func (p *ChaperoneProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// Save logger to request context.
-	ctx := log.NewContext(req.Context(), logger)
+	ctx = log.NewContext(req.Context(), logger)
 	req = req.WithContext(ctx)
 
 	//http: Request.RequestURI can't be set in client requests.
@@ -153,6 +168,8 @@ func (p *ChaperoneProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer res.Body.Close()
+
+	span.SetAttributes(attribute.Int("http.status_code", res.StatusCode))
 
 	delHopHeaders(res.Header)
 

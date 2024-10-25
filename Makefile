@@ -39,7 +39,7 @@ run: container
 		$(CONTAINER):$(TAG) proxy
 
 debug:
-	go run cmd/$(TARGET)/main.go proxy
+	go run cmd/chaperone/main.go proxy
 
 clean:
 	rm -rf dist/

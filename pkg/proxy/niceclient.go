@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"github.com/KillianMeersman/chaperone/pkg/log"
+	"github.com/KillianMeersman/chaperone/pkg/telemetry"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const MaxWaitTimeMs int64 = 120e3 // two minutes
@@ -72,6 +75,79 @@ func (c *NiceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	})
 }
 
+func (c *NiceClient) makeRequest(req *http.Request, options *RequestOptions) (*http.Response, error) {
+	logger, _ := log.FromContext(req.Context())
+	originalURL := req.URL.String()
+
+	// Make request
+	logger.Debug("Making request")
+	ctx, span := telemetry.Tracer.Start(req.Context(), "HTTP request", trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("http.url", req.URL.String())))
+	defer span.End()
+	req = req.WithContext(ctx)
+
+	res, err := c.roundtripper.RoundTrip(req)
+	if err != nil {
+		span.RecordError(err)
+		return nil, err
+	}
+	span.SetAttributes(attribute.Int("http.status_code", res.StatusCode))
+	logger = logger.With("status_code", fmt.Sprint(res.StatusCode))
+	logger.Debug("got response", "status_code", fmt.Sprint(res.StatusCode))
+
+	switch res.StatusCode {
+	case 429, 503:
+		// Backoff status codes, meaning we're rate-limited or the service is down.
+		logger.Warning("got backoff status code")
+
+		// Check if there was a Retry-After header and obey if present.
+		waitTimeMs := ParseRetryAfterHeader(res, 3*time.Second).Milliseconds()
+		if waitTimeMs > MaxWaitTimeMs {
+			waitTimeMs = MaxWaitTimeMs
+		}
+
+		// Add random jitter to prevent thundering herd problem.
+		jitter := rand.Int63n(2000)
+		blockDuration := time.Duration(waitTimeMs+jitter) * time.Millisecond
+		span.AddEvent("blocking throttle", trace.WithAttributes(attribute.Int("duration_seconds", int(blockDuration.Seconds()))))
+		c.throttle.Block(res.Request, blockDuration)
+	case 301, 302, 307, 308:
+		// Handle redirects.
+		// We parse the url passed in the Location header and navigate there,
+		// falling through to the default logic so that this redirect is transparent
+		// to the caller.
+		location, err := url.Parse(res.Header.Get("Location"))
+		if err != nil {
+			return nil, err
+		}
+		newReq := &http.Request{
+			Method: req.Method,
+			URL:    location,
+			Header: req.Header,
+			Body:   req.Body,
+		}
+		logger.With("to", location.String()).Info("Got redirect")
+		span.AddEvent("following redirect", trace.WithAttributes(attribute.String("location", location.String())))
+		res, err = c.RoundTripWithOptions(newReq, options)
+		if err != nil {
+			return nil, err
+		}
+
+		fallthrough
+	default:
+		// Default case, attempt caching and return the response.
+
+		// Cache GET requests when possible.
+		// Other HTTP methods should never be cached.
+		if req.Method == http.MethodGet {
+			res.Body, err = c.cache.Cache(ctx, originalURL, res, options.MinCacheTTL, options.MaxCacheTTL, options.DefaultCacheTTL)
+		}
+
+		// Success! Return response and any error.
+		span.SetAttributes(attribute.Int("http.status_code", res.StatusCode))
+	}
+	return res, err
+}
+
 // Perform a round-trip with the provided options.
 func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOptions) (*http.Response, error) {
 	attempt := 1
@@ -81,18 +157,22 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 	}
 
 	ctx := req.Context()
-	logger, _ := log.FromContext(req.Context())
+	logger, _ := log.FromContext(ctx)
 	originalURL := req.URL.String()
 	logger = logger.With("method", req.Method, "url", originalURL, "attempt", fmt.Sprintf("%d", attempt))
+
+	rootSpan := trace.SpanFromContext(ctx)
 
 	// Special handling for GET requests
 	if req.Method == http.MethodGet {
 		// Check for cached responses and return if exists.
 		cachedResponse, err := c.cache.Get(ctx, req)
 		if err != nil {
+			rootSpan.RecordError(err)
 			return nil, err
 		}
 		if cachedResponse != nil {
+			rootSpan.AddEvent("cached response found", trace.WithAttributes(attribute.Int("http.body_size", len(cachedResponse.Body))))
 			return &http.Response{
 				Status:     "",
 				StatusCode: cachedResponse.StatusCode,
@@ -116,78 +196,37 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 		req.Body = io.NopCloser(bodyBuffer)
 	}
 
-	for {
-		logger.Debug("waiting to make request")
-		c.throttle.Wait(req)
+	// Start span for retry loop
+	ctx, span := telemetry.Tracer.Start(ctx, "HTTP request retry loop", trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("http.url", req.URL.String())))
+	defer span.End()
+	req = req.WithContext(ctx)
 
-		logger.Debug("making request")
-		res, err := c.roundtripper.RoundTrip(req)
-		if err != nil {
+	for {
+
+		logger.Debug("waiting to make request")
+		// Wait for throttle
+		_, span := telemetry.Tracer.Start(ctx, "Throttle wait")
+		c.throttle.Wait(req)
+		span.End()
+
+		res, err := c.makeRequest(req, options)
+		switch err {
+		case nil:
+
+			attempt++
+			logger = logger.With("attempt", fmt.Sprintf("%d", attempt))
+			return res, nil
+		case http.ErrHandlerTimeout:
+			// Break loop if the context is cancelled
+			select {
+			case <-ctx.Done():
+				return nil, errors.New("context cancelled request retry loop")
+			default:
+				continue
+			}
+		default:
 			return nil, err
 		}
-
-		logger = logger.With("status_code", fmt.Sprint(res.StatusCode))
-
-		logger.Debug("got response", "status_code", fmt.Sprint(res.StatusCode))
-
-		switch res.StatusCode {
-		case 429, 503:
-			// Backoff status codes, meaning we're rate-limited or the service is down.
-			logger.Warning("got backoff status code")
-
-			// Check if there was a Retry-After header and obey if present.
-			waitTimeMs := ParseRetryAfterHeader(res, 3*time.Second).Milliseconds()
-			if waitTimeMs > MaxWaitTimeMs {
-				waitTimeMs = MaxWaitTimeMs
-			}
-
-			// Add random jitter to prevent thundering herd problem.
-			jitter := rand.Int63n(2000)
-			c.throttle.Block(res.Request, time.Duration(waitTimeMs+jitter)*time.Millisecond)
-		case 301, 302, 307, 308:
-			// Handle redirects.
-			// We parse the url passed in the Location header and navigate there,
-			// falling through to the default logic so that this redirect is transparent
-			// to the caller.
-			location, err := url.Parse(res.Header.Get("Location"))
-			if err != nil {
-				return nil, err
-			}
-			newReq := &http.Request{
-				Method: req.Method,
-				URL:    location,
-				Header: req.Header,
-				Body:   req.Body,
-			}
-			logger.With("to", location.String()).Info("Got redirect")
-			res, err = c.RoundTripWithOptions(newReq, options)
-			if err != nil {
-				return nil, err
-			}
-
-			fallthrough
-		default:
-			// Default case, attempt caching and return the response.
-
-			// Cache GET requests when possible.
-			// Other HTTP methods should never be cached.
-			if req.Method == http.MethodGet {
-				res.Body, err = c.cache.Cache(ctx, originalURL, res, options.MinCacheTTL, options.MaxCacheTTL, options.DefaultCacheTTL)
-			}
-
-			// Success! Return response and any error.
-			return res, err
-		}
-
-		// Break loop if the context is cancelled
-		select {
-		case <-ctx.Done():
-			return nil, errors.New("context cancelled request retry loop")
-		default:
-		}
-
-		attempt++
-		logger = logger.With("attempt", fmt.Sprintf("%d", attempt))
 	}
 }
 

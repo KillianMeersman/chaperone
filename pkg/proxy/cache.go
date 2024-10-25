@@ -12,6 +12,8 @@ import (
 
 	"github.com/KillianMeersman/chaperone/pkg/datastructures/kvstore"
 	"github.com/KillianMeersman/chaperone/pkg/log"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type CachedResponse struct {
@@ -84,11 +86,14 @@ func (c *HTTPCache) Cache(ctx context.Context, url string, res *http.Response, m
 	logger, _ := log.FromContext(ctx)
 	logger = logger.With("url", url)
 
+	span := trace.SpanFromContext(ctx)
+
 	// If the cache is configured to ignore caching headers,
 	// always cache with the default ttl.
 	if !c.IgnoreHeaders {
 		ttl, err = GetResponseCacheDuration(res, defaultTTL)
 		if err != nil {
+			span.RecordError(err)
 			return nil, err
 		}
 	}
@@ -97,17 +102,22 @@ func (c *HTTPCache) Cache(ctx context.Context, url string, res *http.Response, m
 	// to the provided min. and maximum.
 	if ttl < minTTL {
 		logger.Debug("cache ttl too low, clamping to minimum")
+		span.AddEvent("cache ttl too low, clamping to minimum")
 		ttl = minTTL
 	} else if ttl > maxTTL {
-		logger.Debug("cache ttl to high, clamping to maximum")
+		logger.Debug("cache ttl too high, clamping to maximum")
+		span.AddEvent("cache ttl too high, clamping to maximum")
 		ttl = maxTTL
 	}
 
 	// If not allowed to cache, return early.
 	if ttl <= 0 {
 		logger.Debug("not allowed to cache")
+		span.AddEvent("not allowed to cache response")
 		return res.Body, nil
 	}
+
+	span.SetAttributes(attribute.Float64("cache_ttl_seconds", ttl.Seconds()))
 
 	// Store vary headers and compute cache key
 	varyHeaders := GetVaryHeaderNames(res)
@@ -153,6 +163,7 @@ func (c *HTTPCache) Cache(ctx context.Context, url string, res *http.Response, m
 		return body, nil
 	}
 
+	span.AddEvent("caching response", trace.WithAttributes(attribute.Int("http.body_size", len(data))))
 	logger.With("ttl_seconds", fmt.Sprint(ttl.Seconds())).Debug("caching response")
 	c.cachedResponses.Store(ctx, cacheKey, &CachedResponse{
 		StatusCode:      res.StatusCode,
