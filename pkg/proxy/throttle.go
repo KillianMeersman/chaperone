@@ -30,15 +30,13 @@ type hostThrottle struct {
 // e.g. example.com has a throttle of 1s, example.com/test has a throttle of 2:
 // A request to example.com/test would have to wait on BOTH.
 type MemoryHTTPThrottle struct {
-	throttles       *sync.Map
-	defaultDuration time.Duration
+	throttles *sync.Map
 }
 
 // Create an in-memory throttle that handles per path/http-method throttling.
-func NewMemoryHTTPThrottle(defaultDuration time.Duration) *MemoryHTTPThrottle {
+func NewMemoryHTTPThrottle() *MemoryHTTPThrottle {
 	return &MemoryHTTPThrottle{
-		throttles:       &sync.Map{},
-		defaultDuration: defaultDuration,
+		throttles: &sync.Map{},
 	}
 }
 
@@ -52,21 +50,14 @@ func (t *MemoryHTTPThrottle) Wait(req *http.Request) {
 	pathParts := strings.Split(req.URL.Path, "/")
 
 	// Check if there's a throttle for every part of the path and wait on it if there is.
-	isThrottled := false
 	for i, _ := range pathParts {
 		key := getRequestKey(req, strings.Join(pathParts[:i+1], "/"))
 		throttle, ok := t.throttles.Load(key)
 		if ok {
-			isThrottled = true
 			throttle := throttle.(hostThrottle)
 			throttle.blockers.Wait()
 			<-throttle.ticker.C
 		}
-	}
-
-	// If the request had no explicit throttles, wait the default duration.
-	if !isThrottled {
-		time.Sleep(t.defaultDuration)
 	}
 }
 

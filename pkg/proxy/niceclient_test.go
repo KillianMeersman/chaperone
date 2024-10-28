@@ -26,7 +26,7 @@ func (m *mockRountTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 func TestNiceClient(t *testing.T) {
-	throttle := NewMemoryHTTPThrottle(time.Second)
+	throttle := NewMemoryHTTPThrottle()
 	cache := NewMemoryHTTPCache(context.Background(), 1000)
 
 	roundTripper := &mockRountTripper{
@@ -35,6 +35,7 @@ func TestNiceClient(t *testing.T) {
 
 	client := NewNiceClient(context.Background(), roundTripper, throttle, cache)
 	req, _ := http.NewRequest("GET", "http://example.com", nil)
+	throttle.SetThrottle(req, time.Second)
 
 	start := time.Now()
 	client.RoundTrip(req)

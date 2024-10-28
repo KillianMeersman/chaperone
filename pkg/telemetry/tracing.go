@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"log"
+	"net/http"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
@@ -41,6 +42,11 @@ func newTraceProvider(exp sdktrace.SpanExporter) *sdktrace.TracerProvider {
 		sdktrace.WithBatcher(exp),
 		sdktrace.WithResource(r),
 	)
+}
+
+// Get a context with the necessary information for tracing, inherited from a request's headers.
+func GetRequestContext(req *http.Request) context.Context {
+	return otel.GetTextMapPropagator().Extract(req.Context(), propagation.HeaderCarrier(req.Header))
 }
 
 func InitTracing(ctx context.Context) {

@@ -14,9 +14,7 @@ import (
 	"github.com/KillianMeersman/chaperone/pkg/log"
 	"github.com/KillianMeersman/chaperone/pkg/proxy"
 	"github.com/KillianMeersman/chaperone/pkg/telemetry"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -34,7 +32,7 @@ type ChaperoneProxy struct {
 func (p *ChaperoneProxy) Start(ctx context.Context) error {
 	telemetry.InitTracing(ctx)
 
-	throttle := proxy.NewMemoryHTTPThrottle(time.Second)
+	throttle := proxy.NewMemoryHTTPThrottle()
 	cache := proxy.NewMemoryHTTPCache(ctx, 512e6)
 	p.client = proxy.NewNiceClient(ctx, http.DefaultTransport, throttle, cache)
 
@@ -104,7 +102,7 @@ func (p *ChaperoneProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// Initialize logger
 	logger := log.DefaultLogger.With("request_id", fmt.Sprint(rand.Int()))
 
-	ctx := otel.GetTextMapPropagator().Extract(req.Context(), propagation.HeaderCarrier(req.Header))
+	ctx := telemetry.GetRequestContext(req)
 
 	// Initialize root trace
 	ctx, span := telemetry.Tracer.Start(ctx, req.URL.String(), trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("http.url", req.URL.String())))
