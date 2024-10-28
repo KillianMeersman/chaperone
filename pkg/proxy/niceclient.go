@@ -81,7 +81,7 @@ func (c *NiceClient) makeRequest(req *http.Request, options *RequestOptions) (*h
 
 	// Make request
 	logger.Debug("Making request")
-	ctx, span := telemetry.Tracer.Start(req.Context(), "HTTP request", trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("http.url", req.URL.String())))
+	ctx, span := telemetry.Tracer.Start(req.Context(), req.Method, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("http.url", req.URL.String())))
 	defer span.End()
 	req = req.WithContext(ctx)
 
@@ -205,9 +205,7 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 
 		logger.Debug("waiting to make request")
 		// Wait for throttle
-		_, span := telemetry.Tracer.Start(ctx, "Throttle wait")
 		c.throttle.Wait(req)
-		span.End()
 
 		res, err := c.makeRequest(req, options)
 		switch err {

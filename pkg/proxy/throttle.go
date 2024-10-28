@@ -6,6 +6,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/KillianMeersman/chaperone/pkg/telemetry"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // HTTPThrottle interface performs throttling (rate-limiting).
@@ -55,8 +59,10 @@ func (t *MemoryHTTPThrottle) Wait(req *http.Request) {
 		throttle, ok := t.throttles.Load(key)
 		if ok {
 			throttle := throttle.(hostThrottle)
+			_, span := telemetry.Tracer.Start(req.Context(), "Wait for throttle", trace.WithAttributes(attribute.String("throttle.key", key)))
 			throttle.blockers.Wait()
 			<-throttle.ticker.C
+			span.End()
 		}
 	}
 }
