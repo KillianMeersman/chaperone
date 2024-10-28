@@ -104,8 +104,8 @@ func (p *ChaperoneProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	ctx := telemetry.GetRequestContext(req)
 
-	// Initialize root trace
-	ctx, span := telemetry.Tracer.Start(ctx, req.URL.String(), trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("http.url", req.URL.String())))
+	// Initialize root server span from the request's context.
+	ctx, span := telemetry.Tracer.Start(ctx, req.URL.String(), trace.WithSpanKind(trace.SpanKindServer), trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("http.url", req.URL.String())))
 	req = req.WithContext(ctx)
 	defer span.End()
 
