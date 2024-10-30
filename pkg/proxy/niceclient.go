@@ -17,8 +17,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const MaxWaitTimeMs int64 = 120e3 // two minutes
-
 // Attempt to parse the provided Retry-After header.
 // Returns the provided default duration if there is no such header present.
 func ParseRetryAfterHeader(res *http.Response, defaultWait time.Duration) time.Duration {
@@ -47,6 +45,9 @@ type RequestOptions struct {
 	MinCacheTTL     time.Duration
 	MaxCacheTTL     time.Duration
 	DefaultCacheTTL time.Duration
+	DefaultWaitTime time.Duration
+	MaxWaitTime     time.Duration
+	MaxWaitJitter   time.Duration
 }
 
 // A http client (RoundTripper) that performs retry logic, rate-limiting, robot-exclusion and caching.
@@ -75,7 +76,7 @@ func (c *NiceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	})
 }
 
-func (c *NiceClient) makeRequest(req *http.Request, options *RequestOptions) (*http.Response, error) {
+func (c *NiceClient) makeRequest(req *http.Request, options *RequestOptions, attempt int) (*http.Response, error) {
 	logger, _ := log.FromContext(req.Context())
 	originalURL := req.URL.String()
 
@@ -100,14 +101,16 @@ func (c *NiceClient) makeRequest(req *http.Request, options *RequestOptions) (*h
 		logger.Warning("got backoff status code")
 
 		// Check if there was a Retry-After header and obey if present.
-		waitTimeMs := ParseRetryAfterHeader(res, 3*time.Second).Milliseconds()
-		if waitTimeMs > MaxWaitTimeMs {
-			waitTimeMs = MaxWaitTimeMs
+		defaultWaitTimeMs := int(options.DefaultWaitTime.Milliseconds()) * attempt
+		waitTime := ParseRetryAfterHeader(res, time.Duration(defaultWaitTimeMs)*time.Millisecond)
+		if waitTime > options.MaxWaitTime {
+			waitTime = options.MaxWaitTime
 		}
 
-		// Add random jitter to prevent thundering herd problem.
-		jitter := rand.Int63n(2000)
-		blockDuration := time.Duration(waitTimeMs+jitter) * time.Millisecond
+		// Add random jitter up to MaxWaitJitter to prevent thundering herd problem.
+		jitterMilliseconds := rand.Intn(int(options.MaxWaitJitter.Milliseconds()))
+		jitterDuration := time.Duration(jitterMilliseconds) * time.Millisecond
+		blockDuration := time.Duration(waitTime + jitterDuration)
 		span.AddEvent("blocking throttle", trace.WithAttributes(attribute.Int("duration_seconds", int(blockDuration.Seconds()))))
 		c.throttle.Block(res.Request, blockDuration)
 	case 301, 302, 307, 308:
@@ -202,20 +205,16 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 	req = req.WithContext(ctx)
 
 	for {
-
 		logger.Debug("waiting to make request")
 		// Wait for throttle
 		c.throttle.Wait(req)
 
-		res, err := c.makeRequest(req, options)
+		res, err := c.makeRequest(req, options, attempt)
 		switch err {
 		case nil:
-
-			attempt++
-			logger = logger.With("attempt", fmt.Sprintf("%d", attempt))
 			return res, nil
 		case http.ErrHandlerTimeout:
-			// Break loop if the context is cancelled
+			// On timeout, try connecting again unless the context was cancelled.
 			select {
 			case <-ctx.Done():
 				return nil, errors.New("context cancelled request retry loop")
@@ -223,6 +222,7 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 				continue
 			}
 		default:
+			// If any other error, return it.
 			return nil, err
 		}
 	}

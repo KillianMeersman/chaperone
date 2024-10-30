@@ -159,6 +159,9 @@ func (p *ChaperoneProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		MinCacheTTL:     minTTL,
 		MaxCacheTTL:     maxTTL,
 		DefaultCacheTTL: defaultTTL,
+		DefaultWaitTime: time.Second,
+		MaxWaitTime:     2 * time.Minute,
+		MaxWaitJitter:   200 * time.Millisecond,
 	})
 	if err != nil {
 		logger.Error(err.Error())
