@@ -76,81 +76,6 @@ func (c *NiceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	})
 }
 
-func (c *NiceClient) makeRequest(req *http.Request, options *RequestOptions, attempt int) (*http.Response, error) {
-	logger, _ := log.FromContext(req.Context())
-	originalURL := req.URL.String()
-
-	// Make request
-	logger.Debug("Making request")
-	ctx, span := telemetry.Tracer.Start(req.Context(), req.Method, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("http.url", req.URL.String())))
-	defer span.End()
-	req = req.WithContext(ctx)
-
-	res, err := c.roundtripper.RoundTrip(req)
-	if err != nil {
-		span.RecordError(err)
-		return nil, err
-	}
-	span.SetAttributes(attribute.Int("http.status_code", res.StatusCode))
-	logger = logger.With("status_code", fmt.Sprint(res.StatusCode))
-	logger.Debug("got response", "status_code", fmt.Sprint(res.StatusCode))
-
-	switch res.StatusCode {
-	case 429, 503:
-		// Backoff status codes, meaning we're rate-limited or the service is down.
-		logger.Warning("got backoff status code")
-
-		// Check if there was a Retry-After header and obey if present.
-		defaultWaitTimeMs := int(options.DefaultWaitTime.Milliseconds()) * attempt
-		waitTime := ParseRetryAfterHeader(res, time.Duration(defaultWaitTimeMs)*time.Millisecond)
-		if waitTime > options.MaxWaitTime {
-			waitTime = options.MaxWaitTime
-		}
-
-		// Add random jitter up to MaxWaitJitter to prevent thundering herd problem.
-		jitterMilliseconds := rand.Intn(int(options.MaxWaitJitter.Milliseconds()))
-		jitterDuration := time.Duration(jitterMilliseconds) * time.Millisecond
-		blockDuration := time.Duration(waitTime + jitterDuration)
-		span.AddEvent("blocking throttle", trace.WithAttributes(attribute.Int("duration_seconds", int(blockDuration.Seconds()))))
-		c.throttle.Block(res.Request, blockDuration)
-	case 301, 302, 307, 308:
-		// Handle redirects.
-		// We parse the url passed in the Location header and navigate there,
-		// falling through to the default logic so that this redirect is transparent
-		// to the caller.
-		location, err := url.Parse(res.Header.Get("Location"))
-		if err != nil {
-			return nil, err
-		}
-		newReq := &http.Request{
-			Method: req.Method,
-			URL:    location,
-			Header: req.Header,
-			Body:   req.Body,
-		}
-		logger.With("to", location.String()).Info("Got redirect")
-		span.AddEvent("following redirect", trace.WithAttributes(attribute.String("location", location.String())))
-		res, err = c.RoundTripWithOptions(newReq, options)
-		if err != nil {
-			return nil, err
-		}
-
-		fallthrough
-	default:
-		// Default case, attempt caching and return the response.
-
-		// Cache GET requests when possible.
-		// Other HTTP methods should never be cached.
-		if req.Method == http.MethodGet {
-			res.Body, err = c.cache.Cache(ctx, originalURL, res, options.MinCacheTTL, options.MaxCacheTTL, options.DefaultCacheTTL)
-		}
-
-		// Success! Return response and any error.
-		span.SetAttributes(attribute.Int("http.status_code", res.StatusCode))
-	}
-	return res, err
-}
-
 // Perform a round-trip with the provided options.
 func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOptions) (*http.Response, error) {
 	attempt := 1
@@ -202,14 +127,96 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 	// Start span for retry loop
 	ctx, span := telemetry.Tracer.Start(ctx, "HTTP request retry loop", trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("http.url", req.URL.String())))
 	defer span.End()
-	req = req.WithContext(ctx)
 
 	for {
 		logger.Debug("waiting to make request")
 		// Wait for throttle
 		c.throttle.Wait(req)
 
-		res, err := c.makeRequest(req, options, attempt)
+		originalURL := req.URL.String()
+
+		// Make request
+		logger.Debug("Making request")
+		ctx, span := telemetry.Tracer.Start(ctx, req.Method, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("http.url", req.URL.String())))
+		defer span.End()
+		req = req.WithContext(ctx)
+
+		res, err := c.roundtripper.RoundTrip(req)
+		switch err {
+		case nil:
+		case http.ErrHandlerTimeout:
+			// On timeout, try connecting again unless the context was cancelled.
+			span.RecordError(err)
+			select {
+			case <-ctx.Done():
+				return nil, errors.New("context cancelled request retry loop")
+			default:
+				continue
+			}
+		default:
+			// If any other error, return it.
+			span.RecordError(err)
+			return nil, err
+		}
+
+		span.SetAttributes(attribute.Int("http.status_code", res.StatusCode))
+		logger = logger.With("status_code", fmt.Sprint(res.StatusCode))
+		logger.Debug("got response", "status_code", fmt.Sprint(res.StatusCode))
+
+		switch res.StatusCode {
+		case 429, 503:
+			// Backoff status codes, meaning we're rate-limited or the service is down.
+			logger.Warning("got backoff status code")
+
+			// Check if there was a Retry-After header and obey if present.
+			defaultWaitTimeMs := int(options.DefaultWaitTime.Milliseconds()) * attempt
+			waitTime := ParseRetryAfterHeader(res, time.Duration(defaultWaitTimeMs)*time.Millisecond)
+			if waitTime > options.MaxWaitTime {
+				waitTime = options.MaxWaitTime
+			}
+
+			// Add random jitter up to MaxWaitJitter to prevent thundering herd problem.
+			jitterMilliseconds := rand.Intn(int(options.MaxWaitJitter.Milliseconds()))
+			jitterDuration := time.Duration(jitterMilliseconds) * time.Millisecond
+			blockDuration := time.Duration(waitTime + jitterDuration)
+			span.AddEvent("blocking throttle", trace.WithAttributes(attribute.Int("duration_seconds", int(blockDuration.Seconds()))))
+			c.throttle.Block(res.Request, blockDuration)
+		case 301, 302, 307, 308:
+			// Handle redirects.
+			// We parse the url passed in the Location header and navigate there,
+			// falling through to the default logic so that this redirect is transparent
+			// to the caller.
+			location, err := url.Parse(res.Header.Get("Location"))
+			if err != nil {
+				return nil, err
+			}
+			newReq := &http.Request{
+				Method: req.Method,
+				URL:    location,
+				Header: req.Header,
+				Body:   req.Body,
+			}
+			logger.With("to", location.String()).Info("Got redirect")
+			span.AddEvent("following redirect", trace.WithAttributes(attribute.String("location", location.String())))
+			res, err = c.RoundTripWithOptions(newReq, options)
+			if err != nil {
+				return nil, err
+			}
+
+			fallthrough
+		default:
+			// Default case, attempt caching and return the response.
+
+			// Cache GET requests when possible.
+			// Other HTTP methods should never be cached.
+			if req.Method == http.MethodGet {
+				res.Body, err = c.cache.Cache(ctx, originalURL, res, options.MinCacheTTL, options.MaxCacheTTL, options.DefaultCacheTTL)
+			}
+
+			// Success! Return response and any error.
+			span.SetAttributes(attribute.Int("http.status_code", res.StatusCode))
+		}
+
 		switch err {
 		case nil:
 			return res, nil
