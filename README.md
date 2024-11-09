@@ -1,6 +1,6 @@
 # Chaperone
 
-[Chaperone](https://en.wikipedia.org/wiki/Chaperone_(social)) is a forward HTTP proxy that does caching & rate-limiting. It's meant to sit between your workloads and external servers, keeping the amount of simultaneous connections in check and caching responses where possible. This prevents you from overloading servers, getting rate-limited or even IP-banned. It also allows you to keep your code relatively simple: Sending of requests without having to coordinate or consider various HTTP caching or rate-limiting semantics.
+[Chaperone](https://en.wikipedia.org/wiki/Chaperone_(social)) is a forward HTTP proxy that does caching & rate-limiting. It's meant to sit between your workloads and external servers, keeping the amount of simultaneous connections in check and caching responses where possible. This prevents you from overloading servers, getting rate-limited or even IP-banned. It also allows you to keep your code relatively simple: Sending off requests without having to coordinate or consider various HTTP caching or rate-limiting semantics.
 
 > [!IMPORTANT]
 > Chaperone does not support the CONNECT verb and can thus not act as a https proxy.
