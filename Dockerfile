@@ -1,6 +1,8 @@
 FROM golang:1-alpine AS builder
 
+LABEL org.opencontainers.image.source=https://github.com/KillianMeersman/chaperone
 LABEL org.opencontainers.image.description="A rate-limiting & caching forward HTTP proxy."
+LABEL org.opencontainers.image.licenses=MIT
 
 WORKDIR /app
 ENV GOCACHE=/app/.gocache
