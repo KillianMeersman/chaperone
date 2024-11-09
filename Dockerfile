@@ -1,5 +1,7 @@
 FROM golang:1-alpine AS builder
 
+LABEL org.opencontainers.image.description="A rate-limiting & caching forward HTTP proxy."
+
 WORKDIR /app
 ENV GOCACHE=/app/.gocache
 
