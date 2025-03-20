@@ -3,7 +3,7 @@ module github.com/KillianMeersman/chaperone
 go 1.22.0
 
 require (
-	github.com/redis/go-redis/v9 v9.6.0
+	github.com/redis/go-redis/v9 v9.6.3
 	github.com/spf13/cobra v1.8.0
 	go.opentelemetry.io/otel v1.31.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.31.0
