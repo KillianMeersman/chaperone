@@ -3,7 +3,7 @@ run-name: Release ${{ github.ref_name }}
 on:
   push:
     tags:
-      - v
+      - v*
 
 jobs:
   build_windows_binaries:
