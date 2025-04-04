@@ -1,14 +1,6 @@
 # Chaperone
 
-[Chaperone](https://en.wikipedia.org/wiki/Chaperone_(social)) is a forward HTTP proxy that does caching & rate-limiting. It's meant to sit between your workloads and external servers, keeping the amount of simultaneous connections in check and caching responses where possible. This prevents you from overloading servers, getting rate-limited or even IP-banned. It also allows you to keep your code relatively simple: Sending off requests without having to coordinate or consider various HTTP caching or rate-limiting semantics.
-
-> [!IMPORTANT]
-> Chaperone does not support the CONNECT verb and can thus not act as a https proxy.
-> This is because https proxies act as TCP relays and cannot see the HTTP request or response,
-> leaving them unable to cache or rate-limit based on url.
->
-> All outgoing requests must be made to http addresses. Set the X-Upgrade-HTTPS header to 'true'
-> to make Chaperone upgrade your address to https before sending off the request.
+[Chaperone](https://en.wikipedia.org/wiki/Chaperone_(social)) is a forward (outgoing) HTTP proxy that does caching & rate-limiting. It's meant to sit between your workloads and external servers, keeping the amount of simultaneous connections in check and caching responses where possible. This prevents you from overloading servers, getting rate-limited or even IP-banned. It also allows you to keep your code relatively simple: Sending off requests without having to coordinate or consider various HTTP caching or rate-limiting semantics.
 
 ## Configuration
 Chaperone takes a configuration file, located at $CONFIGFILE (default: ./chaperone.yaml), where you can specify rate limits & caching overrides. It takes the following format:
@@ -28,7 +20,7 @@ rate_limits:
 
 cache_overrides:
    # Force a cache of at least 10m to 1h on all urls starting with `https://example.com`
-   # Responses without cache headers are given a caching ttl of 1m.
+   # Responses without cache headers are given a caching ttl of 10m.
   - url: https://example.com
     min_ttl: 10m
     max_ttl: 1h
@@ -42,6 +34,15 @@ cache_overrides:
 ```
 
 ## Implementation
+
+> [!IMPORTANT]
+> Chaperone does not support the CONNECT verb and can thus not act as a https proxy.
+> This is because https proxies act as TCP relays and cannot see the HTTP request or response,
+> leaving them unable to cache or rate-limit based on url.
+>
+> All outgoing requests must be made to http addresses. Set the X-Upgrade-HTTPS header to 'true'
+> to make Chaperone upgrade your address to https before sending off the request.
+
 ### Python requests
 ```python
 import requests
