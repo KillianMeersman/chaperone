@@ -127,6 +127,7 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 	// Start span for retry loop
 	ctx, span := telemetry.Tracer.Start(ctx, "HTTP request retry loop", trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("http.url", req.URL.String())))
 	defer span.End()
+	req = req.WithContext(ctx)
 
 	for {
 		logger.Debug("waiting to make request")
@@ -139,7 +140,7 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 		logger.Debug("Making request")
 		ctx, span := telemetry.Tracer.Start(ctx, req.Method, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("http.url", req.URL.String())))
 		defer span.End()
-		req = req.WithContext(ctx)
+		req := req.WithContext(ctx)
 
 		res, err := c.roundtripper.RoundTrip(req)
 		switch err {
@@ -160,7 +161,7 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 		}
 
 		span.SetAttributes(attribute.Int("http.status_code", res.StatusCode))
-		logger = logger.With("status_code", fmt.Sprint(res.StatusCode))
+		logger := logger.With("status_code", fmt.Sprint(res.StatusCode))
 		logger.Debug("got response", "status_code", fmt.Sprint(res.StatusCode))
 
 		switch res.StatusCode {
@@ -180,6 +181,8 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 			jitterDuration := time.Duration(jitterMilliseconds) * time.Millisecond
 			blockDuration := time.Duration(waitTime + jitterDuration)
 			span.AddEvent("blocking throttle", trace.WithAttributes(attribute.Int("duration_seconds", int(blockDuration.Seconds()))))
+
+			logger.Warning("blocking throttle", "seconds", fmt.Sprint(blockDuration.Seconds()))
 			c.throttle.Block(res.Request, blockDuration)
 		case 301, 302, 307, 308:
 			// Handle redirects.
