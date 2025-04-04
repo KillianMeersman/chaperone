@@ -1,0 +1,79 @@
+name: Create release
+run-name: Release ${{ github.ref_name }}
+on:
+  push:
+    tags:
+      - v
+
+jobs:
+  build_windows_binaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+            go-version: '^1.23.0'
+      - run: |
+            GOOS=windows GOARCH=amd64 go build -buildvcs=false -o dist/chaperone_windows_x64.exe
+            GOOS=windows GOARCH=386 go build -buildvcs=false -o dist/chaperone_windows_x32.exe
+      - name: 'Upload build artifacts'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-builds
+          path: dist/*
+          retention-days: 3
+
+  build_mac_binaries:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - uses: actions/setup-go@v5
+          with:
+            go-version: '^1.23.0'
+        - run: |
+           GOOS=darwin GOARCH=amd64 go build -buildvcs=false -o dist/chaperone_darwin_x64
+           GOOS=darwin GOARCH=arm64 go build -buildvcs=false -o dist/chaperone_mac_arm64
+        - name: 'Upload build artifacts'
+          uses: actions/upload-artifact@v4
+          with:
+            name: mac-builds
+            path: dist/*
+            retention-days: 3
+
+  build_linux_binaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '^1.23.0'
+      - run: |
+          GOOS=linux GOARCH=amd64 go build -buildvcs=false -o dist/chaperone_linux_x64
+          GOOS=linux GOARCH=386 go build -buildvcs=false -o dist/chaperone_linux_x32
+      - name: 'Upload build artifacts'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-builds
+          path: dist/*
+          retention-days: 3
+    
+  github_release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    needs:
+      - build_windows_binaries
+      - build_mac_binaries
+      - build_linux_binaries
+    steps:
+      - name: Download all workflow run artifacts
+        uses: actions/download-artifact@v4
+      - uses: ncipollo/release-action@v1
+        with:
+          artifacts: "windows-builds/*,mac-builds/*,linux-builds/*"
+          allowUpdates: true
+          makeLatest: true
+          prerelease: false
+          replacesArtifacts: true
+          artifactErrorsFailBuild: true
+          generateReleaseNotes: true

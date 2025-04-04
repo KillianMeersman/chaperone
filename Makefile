@@ -24,7 +24,7 @@ fuzz: vendor
 
 build: vendor vet test
 	mkdir dist || true
-	go build -o dist/$(TARGET) ./cmd/$(TARGET)/main.go
+	go build -o dist/chaperone ./cmd/chaperone/main.go
 
 container:
 	docker build -t $(CONTAINER):$(TAG) .
