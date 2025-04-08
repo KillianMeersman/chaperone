@@ -11,9 +11,8 @@ import (
 	"time"
 
 	"github.com/KillianMeersman/chaperone/pkg/datastructures/kvstore"
-	"github.com/KillianMeersman/chaperone/pkg/log"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
+	"github.com/KillianMeersman/chaperone/pkg/telemetry/log"
+	"github.com/KillianMeersman/chaperone/pkg/telemetry/trace"
 )
 
 type CachedResponse struct {
@@ -86,14 +85,14 @@ func (c *HTTPCache) Cache(ctx context.Context, url string, res *http.Response, m
 	logger, _ := log.FromContext(ctx)
 	logger = logger.With("url", url)
 
-	span := trace.SpanFromContext(ctx)
+	span := trace.CurrentSpan(ctx)
 
 	// If the cache is configured to ignore caching headers,
 	// always cache with the default ttl.
 	if !c.IgnoreHeaders {
-		ttl, err = GetResponseCacheDuration(res, defaultTTL)
+		ttl, err = GetResponseCacheDuration(ctx, res, defaultTTL)
 		if err != nil {
-			span.RecordError(err)
+			logger.Error(ctx, err)
 			return nil, err
 		}
 	}
@@ -101,23 +100,23 @@ func (c *HTTPCache) Cache(ctx context.Context, url string, res *http.Response, m
 	// Clamp the ttl according to the responses's cache headers
 	// to the provided min. and maximum.
 	if ttl < minTTL {
-		logger.Debug("cache ttl too low, clamping to minimum")
-		span.AddEvent("cache ttl too low, clamping to minimum")
+		logger.Debug(ctx, "cache ttl too low, clamping to minimum")
+		span.Event("cache ttl too low, clamping to minimum", map[string]any{})
 		ttl = minTTL
 	} else if ttl > maxTTL {
-		logger.Debug("cache ttl too high, clamping to maximum")
-		span.AddEvent("cache ttl too high, clamping to maximum")
+		logger.Debug(ctx, "cache ttl too high, clamping to maximum")
+		span.Event("cache ttl too high, clamping to maximum", map[string]any{})
 		ttl = maxTTL
 	}
 
 	// If not allowed to cache, return early.
 	if ttl <= 0 {
-		logger.Debug("not allowed to cache")
-		span.AddEvent("not allowed to cache response")
+		logger.Debug(ctx, "not allowed to cache")
+		span.Event("not allowed to cache response", map[string]any{})
 		return res.Body, nil
 	}
 
-	span.SetAttributes(attribute.Float64("cache_ttl_seconds", ttl.Seconds()))
+	span.SetAttributes(map[string]any{"cache_ttl_seconds": ttl.Seconds()})
 
 	// Store vary headers and compute cache key
 	varyHeaders := GetVaryHeaderNames(res)
@@ -140,7 +139,7 @@ func (c *HTTPCache) Cache(ctx context.Context, url string, res *http.Response, m
 		logger = logger.With("size", fmt.Sprintf("%d", contentLength))
 
 		if c.currentSize+int(contentLength) > c.maxSize {
-			logger.Warning("caching response would exceed max size, not caching")
+			logger.Warning(ctx, "caching response would exceed max size, not caching")
 			return res.Body, nil
 		}
 	}
@@ -156,15 +155,15 @@ func (c *HTTPCache) Cache(ctx context.Context, url string, res *http.Response, m
 	logger = logger.With("size", fmt.Sprintf("%d", len(data)))
 
 	if len(data) > int(contentLength) {
-		logger.Warning("response larger than Content-Length, not caching")
+		logger.Warning(ctx, "response larger than Content-Length, not caching")
 		return body, nil
 	} else if c.currentSize+len(data) > c.maxSize {
-		logger.Warning("caching response would exceed max size, not caching")
+		logger.Warning(ctx, "caching response would exceed max size, not caching")
 		return body, nil
 	}
 
-	span.AddEvent("caching response", trace.WithAttributes(attribute.Int("http.body_size", len(data))))
-	logger.With("ttl_seconds", fmt.Sprint(ttl.Seconds())).Debug("caching response")
+	span.Event("caching response", map[string]any{"http.body_size": len(data)})
+	logger.With("ttl_seconds", fmt.Sprint(ttl.Seconds())).Debug(ctx, "caching response")
 	c.cachedResponses.Store(ctx, cacheKey, &CachedResponse{
 		StatusCode:      res.StatusCode,
 		Body:            data,
@@ -191,10 +190,10 @@ func (c *HTTPCache) Get(ctx context.Context, req *http.Request) (*CachedResponse
 
 	data, exists, err := c.cachedResponses.Get(ctx, cacheKey)
 	if exists {
-		logger.Debug("found cached response")
+		logger.Debug(ctx, "found cached response")
 		return data, err
 	}
 
-	logger.Debug("no cached response")
+	logger.Debug(ctx, "no cached response")
 	return nil, err
 }

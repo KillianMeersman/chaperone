@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -8,7 +10,7 @@ import (
 	"time"
 
 	"github.com/KillianMeersman/chaperone/pkg/datastructures"
-	"github.com/KillianMeersman/chaperone/pkg/log"
+	"github.com/KillianMeersman/chaperone/pkg/telemetry/log"
 )
 
 var UncachableHeaderValues = datastructures.NewSet("no-store", "no-cache")
@@ -28,7 +30,7 @@ type CachePolicy struct {
 // Attempt to parse a Cache-Control header, returning the duration the associated
 // response is allowed to be cached.
 // Returns default duration if header could not be parsed.
-func ParseCacheControl(header string, defaultDuration time.Duration) time.Duration {
+func ParseCacheControl(ctx context.Context, header string, defaultDuration time.Duration) time.Duration {
 	ttl := defaultDuration
 
 	directives := strings.Split(header, ",")
@@ -46,7 +48,7 @@ func ParseCacheControl(header string, defaultDuration time.Duration) time.Durati
 		switch directive {
 		case "max-age", "s-max-age":
 			if len(parts) < 2 {
-				log.DefaultLogger.With("header", header).Error("Invalid cache-control header")
+				log.DefaultLogger.With("header", header).Error(ctx, errors.New("Invalid cache-control header"))
 				continue
 			}
 			seconds, err := strconv.Atoi(parts[1])
@@ -74,10 +76,10 @@ func ParseExpiresHeader(header string, defaultDuration time.Duration) time.Durat
 }
 
 // Calculate how long we can cache the response based on headers & other response parameters.
-func GetResponseCacheDuration(res *http.Response, defaultDuration time.Duration) (time.Duration, error) {
+func GetResponseCacheDuration(ctx context.Context, res *http.Response, defaultDuration time.Duration) (time.Duration, error) {
 	headers := res.Header
 	if cacheControl := headers.Get("Cache-Control"); cacheControl != "" {
-		return ParseCacheControl(cacheControl, defaultDuration), nil
+		return ParseCacheControl(ctx, cacheControl, defaultDuration), nil
 	} else if expires := headers.Get("Expires"); expires != "" {
 		return ParseExpiresHeader(expires, defaultDuration), nil
 	}

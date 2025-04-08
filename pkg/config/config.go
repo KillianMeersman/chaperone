@@ -1,13 +1,17 @@
 package config
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
-	"github.com/KillianMeersman/chaperone/pkg/log"
+	"github.com/KillianMeersman/chaperone/pkg/telemetry/log"
 )
+
+var ERR_INVALID_CONFIG_VAL = errors.New("invalid configuration value")
 
 // Get an environment variable as a string.
 func GetString(name, defaultValue string, isSecret bool) string {
@@ -36,7 +40,7 @@ func GetInt64(name string, defaultValue int64, isSecret bool) int64 {
 	value, err := strconv.ParseInt(str, 10, 64)
 
 	if err != nil {
-		log.Fatal("invalid configuration value", "name", name)
+		log.Fatal(context.Background(), ERR_INVALID_CONFIG_VAL, "name", name)
 	}
 
 	return value
@@ -48,7 +52,7 @@ func MustGetInt64(name string, isSecret bool) int64 {
 	value, err := strconv.ParseInt(str, 10, 64)
 
 	if err != nil {
-		log.Fatal("invalid configuration value", "name", name)
+		log.Fatal(context.Background(), ERR_INVALID_CONFIG_VAL, "name", name)
 	}
 
 	return value
@@ -63,7 +67,7 @@ func GetFloat64(name string, defaultValue float64, isSecret bool) float64 {
 
 	value, err := strconv.ParseFloat(str, 64)
 	if err != nil {
-		log.Fatal("invalid configuration value", "name", name)
+		log.Fatal(context.Background(), ERR_INVALID_CONFIG_VAL, "name", name)
 	}
 
 	return value
@@ -75,7 +79,7 @@ func MustGetFloat64(name string, isSecret bool) float64 {
 
 	value, err := strconv.ParseFloat(str, 64)
 	if err != nil {
-		log.Fatal("invalid configuration value", "name", name)
+		log.Fatal(context.Background(), ERR_INVALID_CONFIG_VAL, "name", name)
 	}
 
 	return value
@@ -95,7 +99,7 @@ func GetBool(name string, defaultValue bool, isSecret bool) bool {
 		return false
 	}
 
-	log.Fatal("invalid configuration value", "name", name)
+	log.Fatal(context.Background(), ERR_INVALID_CONFIG_VAL, "name", name)
 	return false
 }
 
@@ -110,7 +114,7 @@ func MustGetBool(name string, isSecret bool) bool {
 		return false
 	}
 
-	log.Fatal("invalid configuration value", "name", name)
+	log.Fatal(context.Background(), ERR_INVALID_CONFIG_VAL, "name", name)
 	return false
 }
 
@@ -124,7 +128,7 @@ func GetStringMap(name string, defaultValue map[string]string, isSecret bool) ma
 	for _, part := range parts {
 		subParts := strings.SplitN(part, "=", 2)
 		if len(subParts) < 2 {
-			log.Fatal("invalid configuration value", "name", name)
+			log.Fatal(context.Background(), ERR_INVALID_CONFIG_VAL, "name", name)
 		}
 		strMap[subParts[0]] = subParts[1]
 	}
@@ -142,7 +146,7 @@ func MustGetStringMap(name string, isSecret bool) map[string]string {
 	for _, part := range parts {
 		subParts := strings.SplitN(part, "=", 2)
 		if len(subParts) < 2 {
-			log.Fatal("invalid configuration value", "name", name)
+			log.Fatal(context.Background(), ERR_INVALID_CONFIG_VAL, "name", name)
 		}
 		strMap[subParts[0]] = subParts[1]
 	}

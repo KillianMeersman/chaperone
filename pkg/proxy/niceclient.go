@@ -11,10 +11,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/KillianMeersman/chaperone/pkg/log"
-	"github.com/KillianMeersman/chaperone/pkg/telemetry"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
+	"github.com/KillianMeersman/chaperone/pkg/telemetry/log"
+	"github.com/KillianMeersman/chaperone/pkg/telemetry/trace"
 )
 
 // Attempt to parse the provided Retry-After header.
@@ -89,18 +87,20 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 	originalURL := req.URL.String()
 	logger = logger.With("method", req.Method, "url", originalURL, "attempt", fmt.Sprintf("%d", attempt))
 
-	rootSpan := trace.SpanFromContext(ctx)
+	rootSpan := trace.CurrentSpan(ctx)
 
 	// Special handling for GET requests
 	if req.Method == http.MethodGet {
 		// Check for cached responses and return if exists.
 		cachedResponse, err := c.cache.Get(ctx, req)
 		if err != nil {
-			rootSpan.RecordError(err)
+			logger.Error(ctx, err)
 			return nil, err
 		}
 		if cachedResponse != nil {
-			rootSpan.AddEvent("cached response found", trace.WithAttributes(attribute.Int("http.body_size", len(cachedResponse.Body))))
+			rootSpan.Event("cached response found", map[string]any{
+				"http.body_size": len(cachedResponse.Body),
+			})
 			return &http.Response{
 				Status:     "",
 				StatusCode: cachedResponse.StatusCode,
@@ -118,27 +118,30 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 		if err != nil {
 			return nil, err
 		}
-		logger.With("buffer_size", fmt.Sprint(written)).Debug("buffered request body for retries")
+		logger.With("buffer_size", fmt.Sprint(written)).Debug(ctx, "buffered request body for retries")
 		req.Body.Close()
 		// The NopCloser won't do anything when RoundTrip() closes it.
 		req.Body = io.NopCloser(bodyBuffer)
 	}
 
 	// Start span for retry loop
-	ctx, span := telemetry.Tracer.Start(ctx, "HTTP request retry loop", trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("http.url", req.URL.String())))
+	ctx, span := trace.StartInternalSpan(ctx, "HTTP request retry loop", map[string]any{
+		"http.method": req.Method,
+		"http.url":    req.URL.String(),
+	})
 	defer span.End()
 	req = req.WithContext(ctx)
 
 	for {
-		logger.Debug("waiting to make request")
+		logger.Debug(ctx, "waiting to make request")
 		// Wait for throttle
 		c.throttle.Wait(req)
 
 		originalURL := req.URL.String()
 
 		// Make request
-		logger.Debug("Making request")
-		ctx, span := telemetry.Tracer.Start(ctx, req.Method, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("http.url", req.URL.String())))
+		logger.Debug(ctx, "Making request")
+		ctx, span := trace.StartClientSpan(ctx, req.Method, map[string]any{"http.method": req.Method, "http.url": req.URL.String()})
 		defer span.End()
 		req := req.WithContext(ctx)
 
@@ -147,7 +150,7 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 		case nil:
 		case http.ErrHandlerTimeout:
 			// On timeout, try connecting again unless the context was cancelled.
-			span.RecordError(err)
+			log.Error(ctx, err)
 			select {
 			case <-ctx.Done():
 				return nil, errors.New("context cancelled request retry loop")
@@ -156,18 +159,18 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 			}
 		default:
 			// If any other error, return it.
-			span.RecordError(err)
+			log.Error(ctx, err)
 			return nil, err
 		}
 
-		span.SetAttributes(attribute.Int("http.status_code", res.StatusCode))
+		span.SetAttributes(map[string]any{"http.status_code": res.StatusCode})
 		logger := logger.With("status_code", fmt.Sprint(res.StatusCode))
-		logger.Debug("got response", "status_code", fmt.Sprint(res.StatusCode))
+		logger.Debug(ctx, "got response", "status_code", fmt.Sprint(res.StatusCode))
 
 		switch res.StatusCode {
 		case 429, 503:
 			// Backoff status codes, meaning we're rate-limited or the service is down.
-			logger.Warning("got backoff status code")
+			logger.Warning(ctx, "got backoff status code")
 
 			// Check if there was a Retry-After header and obey if present.
 			defaultWaitTimeMs := int(options.DefaultWaitTime.Milliseconds()) * attempt
@@ -180,9 +183,9 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 			jitterMilliseconds := rand.Intn(int(options.MaxWaitJitter.Milliseconds()))
 			jitterDuration := time.Duration(jitterMilliseconds) * time.Millisecond
 			blockDuration := time.Duration(waitTime + jitterDuration)
-			span.AddEvent("blocking throttle", trace.WithAttributes(attribute.Int("duration_seconds", int(blockDuration.Seconds()))))
+			span.Event("blocking throttle", map[string]any{"duration_seconds": int(blockDuration.Seconds())})
 
-			logger.Warning("blocking throttle", "seconds", fmt.Sprint(blockDuration.Seconds()))
+			logger.Warning(ctx, "blocking throttle", "seconds", fmt.Sprint(blockDuration.Seconds()))
 			c.throttle.Block(res.Request, blockDuration)
 		case 301, 302, 307, 308:
 			// Handle redirects.
@@ -199,8 +202,8 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 				Header: req.Header,
 				Body:   req.Body,
 			}
-			logger.With("to", location.String()).Info("Got redirect")
-			span.AddEvent("following redirect", trace.WithAttributes(attribute.String("location", location.String())))
+			logger.With("to", location.String()).Info(ctx, "Got redirect")
+			span.Event("following redirect", map[string]any{"location": location.String()})
 			res, err = c.RoundTripWithOptions(newReq, options)
 			if err != nil {
 				return nil, err
@@ -217,7 +220,7 @@ func (c *NiceClient) RoundTripWithOptions(req *http.Request, options *RequestOpt
 			}
 
 			// Success! Return response and any error.
-			span.SetAttributes(attribute.Int("http.status_code", res.StatusCode))
+			span.SetAttributes(map[string]any{"http.status_code": res.StatusCode})
 		}
 
 		switch err {
