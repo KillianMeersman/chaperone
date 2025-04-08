@@ -18,6 +18,7 @@ const SERVICE_VERSION = "0.0.3"
 // The context should be cancelled when the application is shutting down to ensure proper cleanup.
 func InitTelemetry(ctx context.Context, name, version string) {
 	resource := getResource(name, version)
+	log.Info(ctx, "Initializing telemetry", "name", name, "version", version)
 	log.Init(ctx, resource)
 	trace.Init(ctx, resource)
 }

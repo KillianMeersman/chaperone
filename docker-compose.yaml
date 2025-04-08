@@ -8,11 +8,11 @@ services:
       - 127.0.0.1:4317:4317
       - 127.0.0.1:4318:4318
     profiles:
-      - default
       - telemetry
     depends_on:
       - jaeger
       - prometheus
+      - loki
 
   jaeger:
     # Collects OpenTelemetry traces from the collector.
@@ -27,7 +27,6 @@ services:
     ports:
       - 127.0.0.1:16686:16686 # UI
     profiles:
-      - default
       - telemetry
     depends_on:
       - elasticsearch
@@ -41,7 +40,6 @@ services:
     ports:
       - 127.0.0.1:9090:9090 # UI
     profiles:
-      - default
       - telemetry
 
   loki:
@@ -54,7 +52,6 @@ services:
     volumes:
       - loki-data:/loki
     profiles:
-      - default
       - telemetry
 
   elasticsearch:
@@ -79,8 +76,12 @@ services:
     volumes:
       - grafana-data:/var/lib/grafana
     profiles:
-      - default
       - telemetry
+    depends_on:
+      - loki
+      - prometheus
+      - jaeger
+      - elasticsearch
 
 
 volumes:

@@ -45,7 +45,7 @@ exporters:
   # Loki's OTLPHTTP endpoint.
   # See https://github.com/open-telemetry/opentelemetry-collector/blob/main/exporter/otlphttpexporter/README.md
   otlphttp/loki:
-    endpoint: http://loki-all:3100/otlp
+    endpoint: http://loki:3100/otlp
     tls:
       insecure: true
 

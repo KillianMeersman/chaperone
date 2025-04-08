@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -17,9 +18,19 @@ func (s *Span) Event(name string, attributes map[string]any) {
 	s.otelSpan.AddEvent(name, trace.WithAttributes(otelAttributes...))
 }
 
-// Record an error that occured in a span.
+// Record a recoverable error that occured in a span.
+// This will not set the span status to Error.
+// This is useful for errors that are not critical to the span's success.
 func (s *Span) Error(err error) {
 	s.otelSpan.RecordError(err)
+}
+
+// Record an unrecoverable error that occured in a span.
+// This will also set the span status to Error.
+// This is useful for errors that are critical to the span's success.
+func (s *Span) Fatal(err error) {
+	s.otelSpan.RecordError(err)
+	s.otelSpan.SetStatus(codes.Error, err.Error())
 }
 
 func (s *Span) SetAttributes(attributes map[string]any) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/KillianMeersman/chaperone/pkg/telemetry/log"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
@@ -28,7 +27,7 @@ func GetRequestContext(req *http.Request) context.Context {
 func Init(ctx context.Context, res *resource.Resource) {
 	exp, err := otlptracegrpc.New(ctx)
 	if err != nil {
-		log.Fatal(ctx, err)
+		panic(err)
 	}
 
 	// Create a new tracer provider with a batch span processor and the given exporter.
@@ -43,7 +42,6 @@ func Init(ctx context.Context, res *resource.Resource) {
 	// Handle shutdown properly so nothing leaks.
 	go func() {
 		<-ctx.Done()
-		log.Info(ctx, "shutting down tracer provider")
 		tp.Shutdown(ctx)
 	}()
 

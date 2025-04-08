@@ -213,7 +213,7 @@ func (l *Logger) Warning(ctx context.Context, msg string, fields ...string) {
 	l.log(ctx, WARNING, msg, fields...)
 }
 
-// Log an error.
+// Log a recoverable error.
 // This method will also record the error into the current span.
 func (l *Logger) Error(ctx context.Context, err error, fields ...string) {
 	l.log(ctx, ERROR, err.Error(), fields...)
@@ -223,6 +223,10 @@ func (l *Logger) Error(ctx context.Context, err error, fields ...string) {
 	span.Error(err)
 }
 
+// Log a fatal error.
+// This method will also record the error into the current span,
+// then exit the program with a non-zero status code.
+// If the DEBUG environment variable is set, it will panic instead of exiting.
 func (l *Logger) Fatal(ctx context.Context, err error, fields ...string) {
 	l.log(ctx, FATAL, err.Error(), fields...)
 

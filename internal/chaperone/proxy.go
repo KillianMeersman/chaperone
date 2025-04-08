@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -99,21 +98,23 @@ func appendHostToXForwardHeader(header http.Header, host string) {
 }
 
 func (p *ChaperoneProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// Initialize logger
-	logger := log.DefaultLogger.With("request_id", fmt.Sprint(rand.Int()))
+	// Initialize logger with HTTP request information.
+	// This logger will be used for all log messages in this request.
+	// See https://opentelemetry.io/docs/specs/semconv/attributes-registry/http/
+	logger := log.DefaultLogger.With("client.address", req.RemoteAddr, "http.request.method", req.Method, "url.full", req.URL.String())
 
 	ctx := trace.GetRequestContext(req)
 
 	// Initialize root server span from the request's context.
-	ctx, span := trace.StartServerSpan(ctx, req.URL.String(), map[string]any{"http.method": req.Method, "http.url": req.URL.String()})
+	ctx, span := trace.StartServerSpan(ctx, req.URL.String(), map[string]any{"client.address": req.RemoteAddr, "http.request.method": req.Method, "url.full": req.URL.String()})
 	req = req.WithContext(ctx)
 	defer span.End()
 
 	// Code from https://gist.github.com/yowu/f7dc34bd4736a65ff28d
 	if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
-		msg := "unsupported protocol scheme " + req.URL.Scheme
+		msg := "unsupported protocol scheme"
 		http.Error(w, msg, http.StatusBadRequest)
-		logger.Error(ctx, errors.New(msg))
+		logger.Error(ctx, errors.New(msg), "scheme", req.URL.Scheme)
 		return
 	}
 

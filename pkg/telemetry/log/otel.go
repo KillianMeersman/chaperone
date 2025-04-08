@@ -44,5 +44,6 @@ func Init(ctx context.Context, res *resource.Resource) {
 	// If the global logger provider is not set then a no-op implementation
 	// is used, which fails to generate data.
 	global.SetLoggerProvider(provider)
-	otelLogger = provider.Logger("")
+
+	otelLogger = provider.Logger("test")
 }
