@@ -54,3 +54,8 @@ proxies = {
 
 response = requests.get("http://example.com", proxies=proxies, headers={"X-Upgrade-HTTPS": "true"})
 ```
+
+## Telemetry
+Chaperone is fully instrumented for OpenTelemetry traces & logs. Although disabled by default, instrumentation can enabled via the [standard OpenTelemetry environment variables](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/#general-sdk-configuration).
+
+Logs are always emmitted to stderr, in addition to 

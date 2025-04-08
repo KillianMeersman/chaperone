@@ -2,20 +2,19 @@ package chaperone
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/KillianMeersman/chaperone/pkg/log"
 	"github.com/KillianMeersman/chaperone/pkg/proxy"
 	"github.com/KillianMeersman/chaperone/pkg/telemetry"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
+	"github.com/KillianMeersman/chaperone/pkg/telemetry/log"
+	"github.com/KillianMeersman/chaperone/pkg/telemetry/trace"
 )
 
 // The Chaperone proxy.
@@ -30,7 +29,7 @@ type ChaperoneProxy struct {
 }
 
 func (p *ChaperoneProxy) Start(ctx context.Context) error {
-	telemetry.InitTracing(ctx)
+	telemetry.InitTelemetry(ctx, "chaperone", "0.0.1")
 
 	throttle := proxy.NewMemoryHTTPThrottle()
 	cache := proxy.NewMemoryHTTPCache(ctx, 512e6)
@@ -38,7 +37,7 @@ func (p *ChaperoneProxy) Start(ctx context.Context) error {
 
 	configFile, err := ParseConfigFile(ConfigFileLocation)
 	if err != nil {
-		log.DefaultLogger.Fatal(err.Error())
+		log.DefaultLogger.Fatal(ctx, err)
 	}
 
 	p.config = configFile
@@ -48,7 +47,7 @@ func (p *ChaperoneProxy) Start(ctx context.Context) error {
 		if err != nil {
 			panic(err)
 		}
-		log.DefaultLogger.Info("Setting throttle for url", "url", rateLimit.URL, "method", rateLimit.Method, "wait_time", rateLimit.WaitDuration.String())
+		log.DefaultLogger.Info(ctx, "Setting throttle for url", "url", rateLimit.URL, "method", rateLimit.Method, "wait_time", rateLimit.WaitDuration.String())
 		throttle.SetThrottle(&http.Request{
 			Method: rateLimit.Method,
 			URL:    url,
@@ -99,21 +98,23 @@ func appendHostToXForwardHeader(header http.Header, host string) {
 }
 
 func (p *ChaperoneProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// Initialize logger
-	logger := log.DefaultLogger.With("request_id", fmt.Sprint(rand.Int()))
+	// Initialize logger with HTTP request information.
+	// This logger will be used for all log messages in this request.
+	// See https://opentelemetry.io/docs/specs/semconv/attributes-registry/http/
+	logger := log.DefaultLogger.With("client.address", req.RemoteAddr, "http.request.method", req.Method, "url.full", req.URL.String())
 
-	ctx := telemetry.GetRequestContext(req)
+	ctx := trace.GetRequestContext(req)
 
 	// Initialize root server span from the request's context.
-	ctx, span := telemetry.Tracer.Start(ctx, req.URL.String(), trace.WithSpanKind(trace.SpanKindServer), trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("http.url", req.URL.String())))
+	ctx, span := trace.StartServerSpan(ctx, req.URL.String(), map[string]any{"client.address": req.RemoteAddr, "http.request.method": req.Method, "url.full": req.URL.String()})
 	req = req.WithContext(ctx)
 	defer span.End()
 
 	// Code from https://gist.github.com/yowu/f7dc34bd4736a65ff28d
 	if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
-		msg := "unsupported protocol scheme " + req.URL.Scheme
+		msg := "unsupported protocol scheme"
 		http.Error(w, msg, http.StatusBadRequest)
-		logger.Error(msg)
+		logger.Error(ctx, errors.New(msg), "scheme", req.URL.Scheme)
 		return
 	}
 
@@ -164,13 +165,13 @@ func (p *ChaperoneProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		MaxWaitJitter:   200 * time.Millisecond,
 	})
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error(ctx, err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer res.Body.Close()
 
-	span.SetAttributes(attribute.Int("http.status_code", res.StatusCode))
+	span.SetAttributes(map[string]any{"http.status_code": res.StatusCode})
 
 	delHopHeaders(res.Header)
 
@@ -179,7 +180,7 @@ func (p *ChaperoneProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(res.StatusCode)
 	_, err = io.Copy(w, res.Body)
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error(ctx, err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

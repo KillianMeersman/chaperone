@@ -1,0 +1,81 @@
+# Receivers: Where and how do we receive data.
+# =====================================================
+receivers:
+  otlp: # the OTLP receiver the app is sending traces to
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+# Processors: How do we transform our data?
+# =====================================================
+processors:
+  # Limit memory consumption by dropping telemetry if necessary. Prevents OOM.
+  # See https://github.com/open-telemetry/opentelemetry-collector/blob/main/processor/memorylimiterprocessor/README.md
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+
+  # Groups spans from the same trace before sending it on.
+  # Minimizes incomplete traces in downstream collectors.
+  # See https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/processor/groupbytraceprocessor/README.md
+  groupbytrace:
+    wait_duration: 5s
+    num_traces: 10000
+    num_workers: 1
+
+  # Batches telemetry before sending it on, making more effective use of the network.
+  # See https://github.com/open-telemetry/opentelemetry-collector/blob/main/processor/batchprocessor/README.md
+  batch:
+    send_batch_size: 8192
+    timeout: 200ms
+    metadata_cardinality_limit: 1000
+
+# Exporters: Where we expose/push our processed data to.
+# =====================================================
+exporters:
+  # Jaeger's OTLP endpoint.
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  # Loki's OTLPHTTP endpoint.
+  # See https://github.com/open-telemetry/opentelemetry-collector/blob/main/exporter/otlphttpexporter/README.md
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+
+  # Push metrics to Prometheus via remote write.
+  # The remote write exporter normalizes names and labels.
+  # See https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/pkg/translator/prometheus/README.md
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+    tls:
+      insecure: true
+    target_info:
+      enabled: true
+    resource_to_telemetry_conversion:
+      enabled: true # Convert resource attributes to metric labels
+
+# Service: How do we connect our receivers, processors, and exporters?
+# =====================================================
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      # Export traces to jaeger and an internal exporter named 'spanmetrics'.
+      processors: [memory_limiter, groupbytrace, batch]
+      exporters: [otlp/jaeger]
+    metrics:
+      # Receive metrics from our otlp endpoints.
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheusremotewrite]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/loki]

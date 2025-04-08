@@ -1,0 +1,90 @@
+services:
+  opentelemetry-collector:
+    build:
+      context: .services/opentelemetry-collector
+    container_name: opentelemetry-collector
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:4317:4317
+      - 127.0.0.1:4318:4318
+    profiles:
+      - telemetry
+    depends_on:
+      - jaeger
+      - prometheus
+      - loki
+
+  jaeger:
+    # Collects OpenTelemetry traces from the collector.
+    build:
+      context: .services/jaeger
+    container_name: jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      METRICS_STORAGE_TYPE: prometheus
+      PROMETHEUS_SERVER_URL: http://prometheus:9090
+    ports:
+      - 127.0.0.1:16686:16686 # UI
+    profiles:
+      - telemetry
+    depends_on:
+      - elasticsearch
+
+
+  prometheus:
+    build:
+      context: .services/prometheus
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:9090:9090 # UI
+    profiles:
+      - telemetry
+
+  loki:
+    build:
+      context: .services/loki
+    container_name: loki
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:3100:3100 # UI
+    volumes:
+      - loki-data:/loki
+    profiles:
+      - telemetry
+
+  elasticsearch:
+    image: elasticsearch:8.16.4
+    container_name: elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+    ports:
+      - 127.0.0.1:9200:9200/tcp
+      - 127.0.0.1:9300:9300/tcp
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:3000:3000
+    volumes:
+      - grafana-data:/var/lib/grafana
+    profiles:
+      - telemetry
+    depends_on:
+      - loki
+      - prometheus
+      - jaeger
+      - elasticsearch
+
+
+volumes:
+  loki-data:
+  elasticsearch-data:
+  grafana-data:

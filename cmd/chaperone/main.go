@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/KillianMeersman/chaperone/internal/chaperone"
-	"github.com/KillianMeersman/chaperone/pkg/log"
+	"github.com/KillianMeersman/chaperone/pkg/telemetry/log"
 	"github.com/spf13/cobra"
 )
 
@@ -28,7 +28,7 @@ var (
 
 			err := proxy.Start(ctx)
 			if err != nil {
-				log.DefaultLogger.Fatal(err.Error())
+				log.DefaultLogger.Fatal(ctx, err)
 			}
 		},
 	}
@@ -36,8 +36,9 @@ var (
 
 func main() {
 	rootCmd.AddCommand(proxyCmd)
-	err := rootCmd.ExecuteContext(context.Background())
+	ctx := context.Background()
+	err := rootCmd.ExecuteContext(ctx)
 	if err != nil {
-		log.Fatal(err.Error())
+		log.Fatal(ctx, err)
 	}
 }
