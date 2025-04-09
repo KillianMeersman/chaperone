@@ -3,8 +3,11 @@ package telemetry
 import (
 	"context"
 
+	"github.com/KillianMeersman/chaperone/pkg/config"
 	"github.com/KillianMeersman/chaperone/pkg/telemetry/log"
 	"github.com/KillianMeersman/chaperone/pkg/telemetry/trace"
+	"github.com/go-logr/stdr"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
@@ -12,11 +15,25 @@ import (
 const SERVICE_NAME = "chaperone"
 const SERVICE_VERSION = "0.0.3"
 
+type telemetryErrorHandler struct{}
+
+func (h *telemetryErrorHandler) Handle(err error) {
+	log.Error(context.Background(), err)
+}
+
 // Initialize telemetry components.
 // This includes tracing, logging, and metrics.
 // It is recommended to call this function at the start of your application.
 // The context should be cancelled when the application is shutting down to ensure proper cleanup.
 func InitTelemetry(ctx context.Context, name, version string) {
+	if !config.GetBool("OTEL_ENABLED", false, false) {
+		log.Info(ctx, "Telemetry is disabled")
+		return
+	}
+
+	otel.SetLogger(stdr.New(log.DefaultLogger))
+	otel.SetErrorHandler(&telemetryErrorHandler{})
+
 	resource := getResource(name, version)
 	log.Info(ctx, "Initializing telemetry", "name", name, "version", version)
 	log.Init(ctx, resource)

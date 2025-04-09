@@ -56,6 +56,6 @@ response = requests.get("http://example.com", proxies=proxies, headers={"X-Upgra
 ```
 
 ## Telemetry
-Chaperone is fully instrumented for OpenTelemetry traces & logs. Although disabled by default, instrumentation can enabled via the [standard OpenTelemetry environment variables](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/#general-sdk-configuration).
+Chaperone is fully instrumented for OpenTelemetry traces & logs. Although disabled by default, instrumentation can enabled by setting `OTEL_ENABLED` to true and is configured via the [standard OpenTelemetry environment variables](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/#general-sdk-configuration).
 
-Logs are always emmitted to stderr, in addition to 
+Logs are always emmitted to stderr, in addition to the optional OpenTelemetry exporter.

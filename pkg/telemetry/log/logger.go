@@ -264,3 +264,8 @@ func (l *Logger) With(fields ...string) *Logger {
 		Writer:    l.Writer,
 	}
 }
+
+func (l *Logger) Output(calldepth int, s string) error {
+	l.Writer.Write([]byte(s))
+	return nil
+}
